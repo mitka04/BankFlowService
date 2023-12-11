@@ -2,6 +2,8 @@ package com.example.bankflowservice.service;
 
 import com.example.bankflowservice.dto.MonthlyLimitDTO;
 import com.example.bankflowservice.enums.Currency;
+import com.example.bankflowservice.exceptions.InvalidLimitDatetimeException;
+import com.example.bankflowservice.exceptions.LimitAlreadyExistsException;
 import com.example.bankflowservice.mapper.MonthlyLimitMapper;
 import com.example.bankflowservice.model.MonthlyLimit;
 import com.example.bankflowservice.repository.MonthlyLimitRepository;
@@ -32,18 +34,49 @@ public class MonthlyLimitServiceImpl implements MonthlyLimitService{
 
     @Override
     public void updateMonthlyLimit(MonthlyLimitDTO updatedLimitDTO) {
-        MonthlyLimit existingLimit = monthlyLimitRepository.findById(1L).orElseGet(MonthlyLimit::new);
+        Long accountIdLong = updatedLimitDTO.getAccountId().longValue();
+        MonthlyLimit existingLimit = monthlyLimitRepository.findById(accountIdLong)
+                .orElseGet(() -> getDefaultMonthlyLimit(updatedLimitDTO.getAccountId()));
 
-        // Update only the specific fields
-        existingLimit.setAccountId(updatedLimitDTO.getAccountId());
-        existingLimit.setCategory(updatedLimitDTO.getCategory());
-        existingLimit.setLimitSum(
-                updatedLimitDTO.getLimitSum() != null ? updatedLimitDTO.getLimitSum() : BigDecimal.valueOf(1000)
-        );
-        existingLimit.setCurrencyShortname(Currency.USD);
-        existingLimit.setLimitDatetime(
-                updatedLimitDTO.getLimitDatetime() != null ? updatedLimitDTO.getLimitDatetime() : LocalDateTime.now()
-        );
-        monthlyLimitRepository.save(existingLimit);
+        // Prohibit updating existing limits
+        throwIfLimitAlreadyExists(existingLimit);
+
+        // Create a new limit
+        MonthlyLimit newLimit = monthlyLimitMapper.toEntity(updatedLimitDTO);
+
+        // Ensure the new limit date is set to the current date
+        newLimit.setLimitDatetime(LocalDateTime.now());
+
+        // Prohibit setting limits in the past of future
+        throwIfLimitInPastOrFuture(newLimit.getLimitDatetime());
+
+        // Save the new limit
+        monthlyLimitRepository.save(newLimit);
+    }
+
+    // Additional method to get the default monthly limit if not set
+    private MonthlyLimit getDefaultMonthlyLimit(Integer accountId) {
+        MonthlyLimit defaultLimit = new MonthlyLimit();
+        defaultLimit.setAccountId(accountId);
+        defaultLimit.setLimitSum(BigDecimal.valueOf(1000));
+        defaultLimit.setCurrencyShortname(Currency.USD);
+        defaultLimit.setLimitDatetime(LocalDateTime.now());
+        return defaultLimit;
+    }
+
+    // Additional method to check if a limit already exists for the give account
+    private void throwIfLimitAlreadyExists(MonthlyLimit existingLimit){
+        if (existingLimit.getId() != null){
+            throw new LimitAlreadyExistsException("Limit already exists for account " +
+                    existingLimit.getAccountId());
+        }
+    }
+
+    // Additional method to check if a limit is in the past or future
+    private void throwIfLimitInPastOrFuture(LocalDateTime limitDatetime){
+        LocalDateTime now = LocalDateTime.now();
+        if (limitDatetime.isBefore(now) || limitDatetime.isAfter(now)){
+            throw new InvalidLimitDatetimeException("Limit date must be set to the current date");
+        }
     }
 }
